@@ -160,6 +160,12 @@ function fmtMeasure(w, n, d) {
   const [rn, rd] = reduce(n, d);
   return w > 0 ? `${w}-${rn}/${rd}"` : `${rn}/${rd}"`;
 }
+function decimalToFraction(value, maxDen = 32) {
+  const whole = Math.trunc(value);
+  const frac = Math.abs(value - whole);
+  const n = Math.round(frac * maxDen);
+  return { w: whole, n, d: maxDen };
+}
 function parseMeasureText(value) {
   const cleaned = String(value || "")
     .toLowerCase()
@@ -167,6 +173,11 @@ function parseMeasureText(value) {
     .replace(/\s+/g, "")
     .trim();
   if (!cleaned) return null;
+
+  if (cleaned.includes(".")) {
+    const decimal = Number(cleaned);
+    if (Number.isFinite(decimal)) return decimalToFraction(decimal);
+  }
 
   const mixed = cleaned.match(/^(\d+)-(\d+)\/(\d+)$/) || cleaned.match(/^(\d+)(\d+)\/(\d+)$/);
   if (mixed) return { w: Number(mixed[1]), n: Number(mixed[2]), d: Number(mixed[3]) };
@@ -185,6 +196,7 @@ function normalizeMeasureText(value) {
 }
 function randInt(a, b) { return Math.floor(Math.random() * (b - a + 1)) + a; }
 function shuffled(arr) { return [...arr].sort(() => Math.random() - 0.5); }
+function questionKey(q) { return q ? `${q.w}:${q.n}:${q.d}:${q.findMode ? "find" : q.typeMode ? "type" : q.storyMode ? "story" : "read"}` : ""; }
 
 // ─── Storage ──────────────────────────────────────────────────────────────────
 function loadDB() {
@@ -232,7 +244,7 @@ async function deleteStudentRecord(key) {
 
 // ─── Question generator ───────────────────────────────────────────────────────
 // qNum: which question number within session (0-indexed), used to decide review vs new
-function makeQuestion(level, qNum) {
+function makeQuestion(level, qNum, recentQuestionKeys = []) {
   if (level.id === "basics") return null; // handled separately
 
   // Decide: review question or current-level question?
@@ -247,30 +259,56 @@ function makeQuestion(level, qNum) {
     : isReview ? reviewDen : level.den;
 
   const maxW = d === 32 ? 5 : 7;
-  const w = randInt(0, maxW);
-  const n = d <= 1 ? 0 : randInt(0, d - 1);
-  const answer = fmtMeasure(w, n, d);
+  let w = randInt(1, maxW);
+  let n = d <= 1 ? 0 : randInt(0, d - 1);
+  while (w === 0 && n === 0) {
+    w = randInt(1, maxW);
+    n = d <= 1 ? 0 : randInt(0, d - 1);
+  }
   const mode = d <= 1 ? "read" : QUESTION_MIX[qNum % QUESTION_MIX.length];
   const findMode = mode === "find" || mode === "story";
   const typeMode = mode === "type";
   const storyMode = mode === "story";
 
-  const distractors = new Set([answer]);
-  let tries = 0;
-  while (distractors.size < 4 && tries < 40) {
-    tries++;
-    const ww = Math.max(0, Math.min(maxW, w + randInt(-1, 1)));
-    const nn = Math.max(0, Math.min(d - 1, n + randInt(-Math.max(1, d / 8), Math.max(1, d / 8))));
-    distractors.add(fmtMeasure(ww, nn, d));
-  }
-  const fillers = [`${w + 1}"`, `${Math.max(0,w-1)}-1/2"`, `${w}-1/4"`, `${w}-3/4"`];
-  fillers.forEach(f => { if (distractors.size < 4) distractors.add(f); });
+  const questionDen = d;
+  const showDen = level.mixed ? 16 : Math.max(1, level.den || d);
 
-  const showDen = level.mixed ? 16 : Math.max(1, d);
-  const story = storyMode
-    ? `A board needs to be cut to ${answer}. Mark that length on the tape.`
-    : "";
-  return { w, n, d, answer, findMode, typeMode, storyMode, story, showDen, isReview, choices: shuffled([...distractors].slice(0, 4)) };
+  function buildQuestion(ww, nn) {
+    const answer = fmtMeasure(ww, nn, d);
+    const distractors = new Set([answer]);
+    let tries = 0;
+    while (distractors.size < 4 && tries < 40) {
+      tries++;
+      const dw = Math.max(1, Math.min(maxW, ww + randInt(-1, 1)));
+      const dn = Math.max(0, Math.min(d - 1, nn + randInt(-Math.max(1, d / 8), Math.max(1, d / 8))));
+      distractors.add(fmtMeasure(dw, dn, d));
+    }
+    const fillers = [`${Math.min(maxW, ww + 1)}"`, `${Math.max(1, ww - 1)}-1/2"`, `${ww}-1/4"`, `${ww}-3/4"`];
+    fillers.forEach(f => { if (distractors.size < 4) distractors.add(f); });
+    return {
+      w: ww,
+      n: nn,
+      d: questionDen,
+      answer,
+      findMode,
+      typeMode,
+      storyMode,
+      story: storyMode ? `A board needs to be cut to ${answer}. Mark that length on the tape.` : "",
+      showDen,
+      isReview,
+      choices: shuffled([...distractors].slice(0, 4))
+    };
+  }
+
+  let q = buildQuestion(w, n);
+  let repeatTries = 0;
+  while (recentQuestionKeys.includes(questionKey(q)) && repeatTries < 20) {
+    repeatTries++;
+    w = randInt(1, maxW);
+    n = d <= 1 ? 0 : randInt(0, d - 1);
+    q = buildQuestion(w, n);
+  }
+  return q;
 }
 
 function hintFor(lv, q) {
@@ -322,6 +360,14 @@ function reportAccuracyLabel(level) {
     advanced32: "1/32",
   };
   return labels[level.id] || level.name;
+}
+
+function typedAnswerExample(q) {
+  if (!q) return "Example format: 3-1/2 or 3.5";
+  if (q.d <= 2) return "Example format: 3-1/2 or 3.5";
+  if (q.d <= 4) return "Example format: 4-3/4 or 4.75";
+  if (q.d <= 8) return "Example format: 5-1/8 or 5.125";
+  return "Example format: 6-3/16 or 6.1875";
 }
 
 function practicePrepFor(level) {
@@ -832,6 +878,7 @@ export default function App() {
   const [feedback, setFeedback] = useState(null); // null | { correct, msg }
   const [showHint, setShowHint] = useState(false);
   const [questionCount, setQuestionCount] = useState(0);
+  const [recentQuestionKeys, setRecentQuestionKeys] = useState([]);
 
   // Basics quiz state
   const [basicsIdx, setBasicsIdx] = useState(0);
@@ -932,6 +979,7 @@ export default function App() {
     setQuestionCount(0);
     setBasicsIdx(0);
     setSessionQ(0);
+    setRecentQuestionKeys([]);
     setShowLevelDoneModal(false);
     if (studentKey) commitProgress(p => ({ ...p, active: id }));
     setScreen("lesson");
@@ -957,7 +1005,9 @@ export default function App() {
       setBasicsIdx(0);
       setQ({ ...level.questions[0], answer: level.questions[0].a, choices: shuffled(level.questions[0].choices) });
     } else {
-      setQ(makeQuestion(level, 0));
+      const nextQ = makeQuestion(level, 0, []);
+      setQ(nextQ);
+      setRecentQuestionKeys([questionKey(nextQ)]);
     }
     setPicked(null);
     setTypedAnswer("");
@@ -1084,7 +1134,9 @@ export default function App() {
       }
     } else {
       const nextSessionQ = sessionQ + 1;
-      setQ(makeQuestion(level, nextSessionQ));
+      const nextQ = makeQuestion(level, nextSessionQ, recentQuestionKeys);
+      setQ(nextQ);
+      setRecentQuestionKeys(keys => [...keys, questionKey(nextQ)].slice(-12));
       setPicked(null);
       setTypedAnswer("");
       setFeedback(null);
@@ -1102,7 +1154,9 @@ export default function App() {
       else setScreen("dash");
     } else {
       // keep practicing this level
-      setQ(makeQuestion(level, sessionQ));
+      const nextQ = makeQuestion(level, sessionQ, recentQuestionKeys);
+      setQ(nextQ);
+      setRecentQuestionKeys(keys => [...keys, questionKey(nextQ)].slice(-12));
       setPicked(null);
       setTypedAnswer("");
       setFeedback(null);
@@ -1647,10 +1701,10 @@ export default function App() {
 
                 {q.typeMode && level.id !== "basics" && !picked && (
                   <div style={{ marginTop: 14 }}>
-                    <input
-                      className="input"
-                      placeholder={`Example: ${q.answer}`}
-                      value={typedAnswer}
+	                    <input
+	                      className="input"
+	                      placeholder={typedAnswerExample(q)}
+	                      value={typedAnswer}
                       onChange={e => setTypedAnswer(e.target.value)}
                       onKeyDown={e => e.key === "Enter" && submitTypedAnswer()}
                     />
