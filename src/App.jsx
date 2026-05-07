@@ -196,7 +196,8 @@ function normalizeMeasureText(value) {
 }
 function randInt(a, b) { return Math.floor(Math.random() * (b - a + 1)) + a; }
 function shuffled(arr) { return [...arr].sort(() => Math.random() - 0.5); }
-function questionKey(q) { return q ? `${q.w}:${q.n}:${q.d}:${q.findMode ? "find" : q.typeMode ? "type" : q.storyMode ? "story" : "read"}` : ""; }
+function measurementKey(q) { return q ? `${q.w}:${q.n}:${q.d}` : ""; }
+function questionKey(q) { return measurementKey(q); }
 
 // ─── Storage ──────────────────────────────────────────────────────────────────
 function loadDB() {
@@ -244,7 +245,7 @@ async function deleteStudentRecord(key) {
 
 // ─── Question generator ───────────────────────────────────────────────────────
 // qNum: which question number within session (0-indexed), used to decide review vs new
-function makeQuestion(level, qNum, recentQuestionKeys = []) {
+function makeQuestion(level, qNum, recentQuestionKeys = [], repeatCandidate = null) {
   if (level.id === "basics") return null; // handled separately
 
   // Decide: review question or current-level question?
@@ -254,13 +255,13 @@ function makeQuestion(level, qNum, recentQuestionKeys = []) {
     ? level.reviewDens[randInt(0, level.reviewDens.length - 1)]
     : null;
 
-  const d = level.mixed
+  const d = repeatCandidate?.d || (level.mixed
     ? [1, 2, 4, 8, 16][randInt(0, 4)]
-    : isReview ? reviewDen : level.den;
+    : isReview ? reviewDen : level.den);
 
   const maxW = d === 32 ? 5 : 7;
-  let w = randInt(1, maxW);
-  let n = d <= 1 ? 0 : randInt(0, d - 1);
+  let w = repeatCandidate?.w ?? randInt(1, maxW);
+  let n = repeatCandidate?.n ?? (d <= 1 ? 0 : randInt(0, d - 1));
   while (w === 0 && n === 0) {
     w = randInt(1, maxW);
     n = d <= 1 ? 0 : randInt(0, d - 1);
@@ -302,7 +303,7 @@ function makeQuestion(level, qNum, recentQuestionKeys = []) {
 
   let q = buildQuestion(w, n);
   let repeatTries = 0;
-  while (recentQuestionKeys.includes(questionKey(q)) && repeatTries < 20) {
+  while (!repeatCandidate && recentQuestionKeys.includes(questionKey(q)) && repeatTries < 20) {
     repeatTries++;
     w = randInt(1, maxW);
     n = d <= 1 ? 0 : randInt(0, d - 1);
@@ -363,11 +364,7 @@ function reportAccuracyLabel(level) {
 }
 
 function typedAnswerExample(q) {
-  if (!q) return "Example format: 3-1/2 or 3.5";
-  if (q.d <= 2) return "Example format: 3-1/2 or 3.5";
-  if (q.d <= 4) return "Example format: 4-3/4 or 4.75";
-  if (q.d <= 8) return "Example format: 5-1/8 or 5.125";
-  return "Example format: 6-3/16 or 6.1875";
+  return "Enter a fraction or decimal";
 }
 
 function practicePrepFor(level) {
@@ -879,6 +876,7 @@ export default function App() {
   const [showHint, setShowHint] = useState(false);
   const [questionCount, setQuestionCount] = useState(0);
   const [recentQuestionKeys, setRecentQuestionKeys] = useState([]);
+  const [missedRepeatQueue, setMissedRepeatQueue] = useState([]);
 
   // Basics quiz state
   const [basicsIdx, setBasicsIdx] = useState(0);
@@ -980,6 +978,7 @@ export default function App() {
     setBasicsIdx(0);
     setSessionQ(0);
     setRecentQuestionKeys([]);
+    setMissedRepeatQueue([]);
     setShowLevelDoneModal(false);
     if (studentKey) commitProgress(p => ({ ...p, active: id }));
     setScreen("lesson");
@@ -1027,6 +1026,13 @@ export default function App() {
     const normalizedChoice = q?.typeMode ? normalizeMeasureText(choice) : choice;
     setPicked(normalizedChoice || choice);
     const correct = normalizedChoice === q.answer;
+    if (!correct && level.id !== "basics") {
+      const key = measurementKey(q);
+      setMissedRepeatQueue(queue => {
+        const withoutDuplicate = queue.filter(item => item.key !== key);
+        return [...withoutDuplicate, { key, w: q.w, n: q.n, d: q.d, availableAt: sessionQ + 3 }].slice(-8);
+      });
+    }
 
     commitProgress((old) => {
       const s = old.stats[level.id];
@@ -1079,6 +1085,16 @@ export default function App() {
   function submitTypedAnswer() {
     if (!typedAnswer.trim()) return;
     handleAnswer(typedAnswer);
+  }
+
+  function nextMeasurementQuestion(nextSessionQ) {
+    const repeatCandidate = missedRepeatQueue.find(item => item.availableAt <= nextSessionQ);
+    const nextQ = makeQuestion(level, nextSessionQ, recentQuestionKeys, repeatCandidate);
+    if (repeatCandidate) {
+      setMissedRepeatQueue(queue => queue.filter(item => item.key !== repeatCandidate.key));
+    }
+    setQ(nextQ);
+    setRecentQuestionKeys(keys => [...keys, questionKey(nextQ)].slice(-16));
   }
 
   // ── Basics answer ──
@@ -1134,9 +1150,7 @@ export default function App() {
       }
     } else {
       const nextSessionQ = sessionQ + 1;
-      const nextQ = makeQuestion(level, nextSessionQ, recentQuestionKeys);
-      setQ(nextQ);
-      setRecentQuestionKeys(keys => [...keys, questionKey(nextQ)].slice(-12));
+      nextMeasurementQuestion(nextSessionQ);
       setPicked(null);
       setTypedAnswer("");
       setFeedback(null);
@@ -1154,9 +1168,7 @@ export default function App() {
       else setScreen("dash");
     } else {
       // keep practicing this level
-      const nextQ = makeQuestion(level, sessionQ, recentQuestionKeys);
-      setQ(nextQ);
-      setRecentQuestionKeys(keys => [...keys, questionKey(nextQ)].slice(-12));
+      nextMeasurementQuestion(sessionQ);
       setPicked(null);
       setTypedAnswer("");
       setFeedback(null);
