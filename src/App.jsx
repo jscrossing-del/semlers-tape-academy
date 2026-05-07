@@ -29,7 +29,10 @@ const firebaseConfig = {
 const firebaseApp = initializeApp(firebaseConfig);
 const firestore = getFirestore(firebaseApp);
 
-const QUESTION_MIX = ["read", "find", "read", "type", "story"];
+const QUESTION_MIX = [
+  "find", "find", "find", "story", "find",
+  "type", "read", "find", "type", "read",
+];
 
 const LEVELS = [
   {
@@ -201,6 +204,13 @@ function currentMarkNumerator(d) {
     if (gcd(n, d) === 1) marks.push(n);
   }
   return marks[randInt(0, marks.length - 1)] ?? 0;
+}
+function lessonExampleNumerator(d) {
+  if (d <= 1) return 0;
+  for (let n = d - 1; n > 0; n--) {
+    if (gcd(n, d) === 1) return n;
+  }
+  return 0;
 }
 function shuffled(arr) { return [...arr].sort(() => Math.random() - 0.5); }
 function measurementKey(q) { return q ? `${q.w}:${q.n}:${q.d}` : ""; }
@@ -385,7 +395,7 @@ function typedAnswerExample(q) {
 function practicePrepFor(level) {
   if (level.id === "basics") return level.intro;
   const sampleDen = Math.max(1, level.den || 16);
-  const sampleN = sampleDen > 1 ? Math.min(sampleDen - 1, Math.max(1, Math.floor(sampleDen * 0.75))) : 0;
+  const sampleN = lessonExampleNumerator(sampleDen);
   const sample = fmtMeasure(2, sampleN, sampleDen);
   return [
     { step: "Find the whole inch", body: `Start at the big 2" mark. Whole-inch marks are the longest marks and have printed numbers.` },
@@ -393,6 +403,19 @@ function practicePrepFor(level) {
     { step: "Count forward", body: `Count from 2" to the highlighted mark. This example reads ${sample}.` },
     { step: "Simplify", body: "If the fraction can reduce, say the reduced version. For example, 8/16 is 1/2 and 12/16 is 3/4." },
   ];
+}
+
+function lessonPreviewQuestion(level) {
+  const d = Math.max(level.den, 1);
+  const n = lessonExampleNumerator(d);
+  return {
+    w: 2,
+    n,
+    d,
+    showDen: d,
+    answer: fmtMeasure(2, n, d),
+    findMode: false,
+  };
 }
 
 function HookLessonVisual() {
@@ -1593,7 +1616,7 @@ export default function App() {
                 {level.den > 0 && (
                   <div style={{ marginTop: 16 }}>
                     <div className="tag gray" style={{ marginBottom: 10 }}>Tape Preview</div>
-                    <TapeSVG q={{ w: 2, n: level.den > 1 ? Math.floor(level.den * 0.75) : 0, d: Math.max(level.den, 1), showDen: Math.max(level.den, 1), answer: fmtMeasure(2, level.den > 1 ? Math.floor(level.den * 0.75) : 0, Math.max(level.den, 1)), findMode: false }} guide />
+                    <TapeSVG q={lessonPreviewQuestion(level)} guide />
                   </div>
                 )}
 
@@ -1631,14 +1654,7 @@ export default function App() {
                 ))}
 
                 {level.den > 0 && (
-                  <TapeSVG q={{
-                    w: 2,
-                    n: level.den > 1 ? Math.floor(level.den * 0.75) : 0,
-                    d: Math.max(level.den, 1),
-                    showDen: Math.max(level.den, 1),
-                    answer: fmtMeasure(2, level.den > 1 ? Math.floor(level.den * 0.75) : 0, Math.max(level.den, 1)),
-                    findMode: false
-                  }} guide />
+                  <TapeSVG q={lessonPreviewQuestion(level)} guide />
                 )}
 
                 {level.id !== "basics" && (
