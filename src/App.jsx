@@ -195,6 +195,13 @@ function normalizeMeasureText(value) {
   return fmtMeasure(parsed.w + carry, n, parsed.d);
 }
 function randInt(a, b) { return Math.floor(Math.random() * (b - a + 1)) + a; }
+function currentMarkNumerator(d) {
+  const marks = [];
+  for (let n = 1; n < d; n++) {
+    if (gcd(n, d) === 1) marks.push(n);
+  }
+  return marks[randInt(0, marks.length - 1)] ?? 0;
+}
 function shuffled(arr) { return [...arr].sort(() => Math.random() - 0.5); }
 function measurementKey(q) { return q ? `${q.w}:${q.n}:${q.d}` : ""; }
 function questionKey(q) { return measurementKey(q); }
@@ -248,11 +255,14 @@ async function deleteStudentRecord(key) {
 function makeQuestion(level, qNum, recentQuestionKeys = [], repeatCandidate = null) {
   if (level.id === "basics") return null; // handled separately
 
-  // Decide: review question or current-level question?
-  // ~30% of questions after first 3 are review from prior levels
-  const isReview = level.reviewDens.length > 0 && qNum >= 3 && Math.random() < 0.30;
+  const focusCurrentLevel = [4, 8, 16].includes(level.den) && !level.mixed;
+  const reviewOptions = level.reviewDens.length ? level.reviewDens : [1];
+  const useCurrentLevel = focusCurrentLevel ? qNum % 5 !== 4 : true;
+  const isReview = !repeatCandidate && (focusCurrentLevel
+    ? !useCurrentLevel
+    : level.reviewDens.length > 0 && qNum >= 3 && Math.random() < 0.30);
   const reviewDen = isReview
-    ? level.reviewDens[randInt(0, level.reviewDens.length - 1)]
+    ? reviewOptions[randInt(0, reviewOptions.length - 1)]
     : null;
 
   const d = repeatCandidate?.d || (level.mixed
@@ -261,10 +271,15 @@ function makeQuestion(level, qNum, recentQuestionKeys = [], repeatCandidate = nu
 
   const maxW = d === 32 ? 5 : 7;
   let w = repeatCandidate?.w ?? randInt(1, maxW);
-  let n = repeatCandidate?.n ?? (d <= 1 ? 0 : randInt(0, d - 1));
+  const chooseN = () => {
+    if (d <= 1) return 0;
+    if (focusCurrentLevel && !isReview && d === level.den) return currentMarkNumerator(d);
+    return randInt(0, d - 1);
+  };
+  let n = repeatCandidate?.n ?? chooseN();
   while (w === 0 && n === 0) {
     w = randInt(1, maxW);
-    n = d <= 1 ? 0 : randInt(0, d - 1);
+    n = chooseN();
   }
   const mode = d <= 1 ? "read" : QUESTION_MIX[qNum % QUESTION_MIX.length];
   const findMode = mode === "find" || mode === "story";
@@ -306,7 +321,7 @@ function makeQuestion(level, qNum, recentQuestionKeys = [], repeatCandidate = nu
   while (!repeatCandidate && recentQuestionKeys.includes(questionKey(q)) && repeatTries < 20) {
     repeatTries++;
     w = randInt(1, maxW);
-    n = d <= 1 ? 0 : randInt(0, d - 1);
+    n = chooseN();
     q = buildQuestion(w, n);
   }
   return q;
