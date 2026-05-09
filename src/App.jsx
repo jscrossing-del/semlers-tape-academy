@@ -1094,9 +1094,12 @@ export default function App() {
       if (passed || s.done) {
         const idx = LEVELS.findIndex(lv => lv.id === level.id);
         if (LEVELS[idx + 1]) stats[LEVELS[idx + 1].id] = { ...stats[LEVELS[idx + 1].id], unlocked: true };
+        if (level.id === "sixteenth") {
+          stats["advanced32"] = { ...stats["advanced32"], unlocked: true };
+        }
       }
 
-      const coreLevels = ["basics","whole","half","quarter","eighth","sixteenth","mixed"];
+      const coreLevels = ["basics","whole","half","quarter","eighth","sixteenth"];
       const certified = coreLevels.every(id => stats[id]?.done);
       const advCertified = stats["advanced32"]?.done;
       const today = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
@@ -1230,7 +1233,7 @@ export default function App() {
       ...reportAccuracyLevels().map(lv => `${reportAccuracyLabel(lv)} Accuracy`),
       "Top Misses",
       "Certified",
-      "Adv. Certified"
+      "Bonus Certified"
     ];
     const rows = Object.values(db.students).map(st => {
       const tot = Object.values(st.stats).reduce((a, s) => a + s.attempts, 0);
@@ -1440,7 +1443,7 @@ export default function App() {
                             <td className="level-accuracy" key={lv.id}>{levelAccuracyValue(st, lv.id) || "—"}</td>
                           ))}
                           <td>{misses || "—"}</td>
-                          <td>{st.advCertified ? <span style={{color:"#C0392B"}}>Adv.</span> : st.certified ? <span style={{color:"#16a34a"}}>Core</span> : "—"}</td>
+                          <td>{st.advCertified ? <span style={{color:"#C0392B"}}>Bonus</span> : st.certified ? <span style={{color:"#16a34a"}}>Core</span> : "—"}</td>
                           <td>
                             <div className="teacher-actions">
                               <button className="btn ghost sm" onClick={() => unlockStudentLevel(key)}>Unlock</button>
@@ -1802,7 +1805,7 @@ export default function App() {
             {progress.advCertified && (
               <div className="cert-box" style={{ border: "3px solid #C0392B", boxShadow: "6px 6px 0 #1a1a1a", marginBottom: 20 }}>
                 <div className="cert-icon">🏆</div>
-                <h2 style={{ color: "#C0392B" }}>Advanced Mastery Certificate</h2>
+                <h2 style={{ color: "#C0392B" }}>Bonus Certificate</h2>
                 <p style={{ color: "#888", fontSize: 13, letterSpacing: "0.08em" }}>SEMLER'S TAPE MEASURE ACADEMY</p>
                 <div className="cert-name">{progress.name}</div>
                 <p>has demonstrated <b>Advanced Mastery</b> of reading a tape measure to <b>1/32 of an inch</b> — a precision skill used in woodworking, metalworking, and engineering.</p>
